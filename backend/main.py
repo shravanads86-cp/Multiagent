@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from app.agents import BaseAgent, DevelopmentSupervisor, GlobalOrchestrator
 from app.database import create_pipeline_repository
 from app.schemas import PipelineRequest
+from app.auth import router as auth_router
 
 load_dotenv(Path(__file__).with_name(".env"))
 
@@ -40,6 +41,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 @app.get("/")
 def root():
