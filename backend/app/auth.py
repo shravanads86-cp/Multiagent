@@ -14,8 +14,9 @@ import re
 import secrets
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,6 +27,7 @@ bearer = HTTPBearer(auto_error=False)
 DB_PATH = Path(os.getenv("AUTH_DATABASE_PATH", str(Path(__file__).resolve().parents[1] / "data" / "users.sqlite3")))
 TOKEN_TTL_SECONDS = 60 * 60 * 24 * 7
 PBKDF2_ITERATIONS = 310_000
+_DEV_TOKEN_SECRET = secrets.token_bytes(32)
 
 
 class SignupPayload(BaseModel):
@@ -39,21 +41,29 @@ class LoginPayload(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH, timeout=10)
     connection.row_factory = sqlite3.Row
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash TEXT NOT NULL,
-            password_salt TEXT NOT NULL,
-            created_at INTEGER NOT NULL
-        )
-    """)
-    return connection
+    try:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
@@ -73,7 +83,8 @@ def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
 
 
 def _token_secret() -> bytes:
-    return os.getenv("AUTH_TOKEN_SECRET", "local-development-only-change-this-secret").encode("utf-8")
+    configured = os.getenv("AUTH_TOKEN_SECRET")
+    return configured.encode("utf-8") if configured else _DEV_TOKEN_SECRET
 
 
 def _issue_token(user_id: str) -> str:
