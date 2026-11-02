@@ -11,25 +11,83 @@ function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState('signin')
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' })
   const [error, setError] = useState('')
-  const update = (key) => (event) => setForm({ ...form, [key]: event.target.value })
+  const [submitting, setSubmitting] = useState(false)
+  const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault()
-    if (mode === 'signup' && form.password !== form.confirmPassword) return setError('Passwords do not match.')
-    if (form.password.length < 4) return setError('Use at least 4 characters for your password.')
-    const user = mode === 'signup' ? form.name || form.email.split('@')[0] : form.email.split('@')[0] || 'Operator'
-    localStorage.setItem('swarm-user', user)
-    onAuthenticated(user)
+    setError('')
+    if (mode === 'signup' && form.password !== form.confirmPassword) {
+      setError('Passwords do not match.')
+      return
+    }
+    if (form.password.length < 8) {
+      setError('Password must contain at least 8 characters.')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const response = await fetch(`${apiBase}/auth/${mode === 'signup' ? 'signup' : 'login'}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(mode === 'signup' ? { name: form.name.trim() } : {}),
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        const detail = result.detail
+        throw new Error(typeof detail === 'string' ? detail : 'Unable to authenticate. Please check your details and try again.')
+      }
+      localStorage.setItem('swarm-token', result.access_token)
+      localStorage.setItem('swarm-user', JSON.stringify(result.user))
+      onAuthenticated(result.user)
+    } catch (err) {
+      setError(err.message || 'Unable to reach the authentication server. Make sure the backend is running.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function changeMode(nextMode) {
+    setMode(nextMode)
+    setError('')
+    setForm({ name: '', email: form.email, password: '', confirmPassword: '' })
   }
 
   return <main className="auth-page">
-    <section className="auth-intro"><p className="eyebrow">AUTONOMOUS DEVOPS SWARM</p><h1>Eight agents. One reliable release.</h1><p>Plan, build, secure, deploy, and observe every delivery workflow from one calm control room.</p><div className="auth-points"><span>◈ Eight specialised agents</span><span>◈ Observable pipelines</span><span>◈ Safer releases</span></div></section>
-    <section className="auth-card"><div className="auth-tabs"><button className={mode === 'signin' ? 'active' : ''} onClick={() => { setMode('signin'); setError('') }}>Sign in</button><button className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError('') }}>Create account</button></div><div className="auth-heading"><p className="section-label">{mode === 'signin' ? 'WELCOME BACK' : 'CREATE ACCOUNT'}</p><p>{mode === 'signin' ? 'Sign in to access mission control.' : 'Start orchestrating your first delivery mission.'}</p></div><form className="auth-form" onSubmit={submit}>{mode === 'signup' && <label>Full name<input value={form.name} onChange={update('name')} placeholder="Alex Morgan" required /></label>}<label>Email<input type="email" value={form.email} onChange={update('email')} placeholder="you@example.com" required /></label><label>Password<input type="password" value={form.password} onChange={update('password')} placeholder="••••••••" required /></label>{mode === 'signup' && <label>Confirm password<input type="password" value={form.confirmPassword} onChange={update('password')} placeholder="••••••••" required /></label>}{error && <p className="error">{error}</p>}<button className="primary-button" type="submit">{mode === 'signin' ? 'Enter mission control' : 'Create account'}</button></form><p className="auth-note">Demo authentication — your account is stored only in this browser.</p></section>
+    <section className="auth-intro">
+      <p className="eyebrow">AUTONOMOUS DEVOPS SWARM</p>
+      <h1>Eight agents. One reliable release.</h1>
+      <p>Plan, build, secure, deploy, and observe every delivery workflow from one calm control room.</p>
+      <div className="auth-points"><span>◈ Eight specialised agents</span><span>◈ Observable pipelines</span><span>◈ Safer releases</span></div>
+    </section>
+    <section className="auth-card">
+      <div className="auth-tabs">
+        <button type="button" className={mode === 'signin' ? 'active' : ''} onClick={() => changeMode('signin')}>Sign in</button>
+        <button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => changeMode('signup')}>Create account</button>
+      </div>
+      <div className="auth-heading">
+        <p className="section-label">{mode === 'signin' ? 'WELCOME BACK' : 'CREATE ACCOUNT'}</p>
+        <p>{mode === 'signin' ? 'Sign in to access mission control.' : 'Create your account to start orchestrating delivery missions.'}</p>
+      </div>
+      <form className="auth-form" onSubmit={submit}>
+        {mode === 'signup' && <label>Full name<input autoComplete="name" value={form.name} onChange={update('name')} placeholder="Alex Morgan" minLength={2} maxLength={80} required /></label>}
+        <label>Email<input type="email" autoComplete="email" value={form.email} onChange={update('email')} placeholder="you@example.com" required /></label>
+        <label>Password<input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={form.password} onChange={update('password')} placeholder="At least 8 characters" minLength={8} maxLength={128} required /></label>
+        {mode === 'signup' && <label>Confirm password<input type="password" autoComplete="new-password" value={form.confirmPassword} onChange={update('confirmPassword')} placeholder="Re-enter your password" minLength={8} required /></label>}
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary-button" type="submit" disabled={submitting}>{submitting ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'}</button>
+      </form>
+      <p className="auth-note">Your account is securely stored by the backend. Passwords are never stored as plain text.</p>
+    </section>
   </main>
 }
-
 function App() {
-  const [user, setUser] = useState(() => localStorage.getItem('swarm-user'))
+  const [user, setUser] = useState(() => { try { const saved = JSON.parse(localStorage.getItem('swarm-user') || 'null'); return saved && typeof saved === 'object' ? saved : null } catch { return null } })
   const [page, setPage] = useState('dashboard')
   const [request, setRequest] = useState('Build a student management portal')
   const [pipeline, setPipeline] = useState(null)
@@ -202,9 +260,9 @@ function App() {
           <h1>{page === 'dashboard' ? 'Mission control' : page === 'healing' ? 'Self-Healing & DB Failure Memory' : page[0].toUpperCase() + page.slice(1)}</h1>
         </div>
         <div className="user-menu">
-          <span className="avatar">{user[0]?.toUpperCase()}</span>
-          <div><strong>{user}</strong><small>Operator</small></div>
-          <button title="Sign out" className="signout" onClick={() => { localStorage.removeItem('swarm-user'); setUser(null) }}>Sign out</button>
+          <span className="avatar">{user.name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase()}</span>
+          <div><strong>{user.name}</strong><small>{user.email}</small></div>
+          <button title="Sign out" className="signout" onClick={() => { localStorage.removeItem('swarm-user'); localStorage.removeItem('swarm-token'); setUser(null) }}>Sign out</button>
         </div>
       </header>
 
